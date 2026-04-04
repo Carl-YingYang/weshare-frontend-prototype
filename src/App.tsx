@@ -5,7 +5,7 @@ import {
   MessageCircle, Share2, Plus, Play, MoreVertical, LayoutGrid,
   UserPlus, ChevronDown, Settings, Volume2, Maximize2, Check,
   FileText, Code, PenTool, Star, Download, MoreHorizontal,
-  Send, Zap, TrendingUp, Filter, Clock, Info
+  Send, TrendingUp, Filter, Clock, Info
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────
