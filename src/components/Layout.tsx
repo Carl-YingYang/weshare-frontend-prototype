@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Search, Bell, Home as HomeIcon, Users, LayoutGrid, ChevronDown, UserPlus, Loader2, X, Edit, Camera, Trash2, Heart, MessageCircle, AlertCircle, Menu, LogOut, Clock, UserCheck } from 'lucide-react';
+import { Search, Bell, Home as HomeIcon, Users, LayoutGrid, UserPlus, Loader2, X, Edit, Camera, Trash2, Heart, MessageCircle, AlertCircle, LogOut, Clock, UserCheck } from 'lucide-react';
 import { Avatar, getAvatarColor } from './Shared';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../api/client';

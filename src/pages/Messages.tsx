@@ -97,7 +97,7 @@ export default function Messages() {
                 setMessages(prev => prev.filter(m => m.id !== deletedMsgId));
             });
 
-        }).catch(e => setIsConnected(false));
+        }).catch(() => setIsConnected(false));
 
         return () => { newConnection.stop(); };
     }, []);
