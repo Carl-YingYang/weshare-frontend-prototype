@@ -11,26 +11,6 @@ export interface AuthResponse {
     user: User;
 }
 
-export interface Comment {
-    id: string;
-    content: string;
-    createdAt: string;
-    authorName: string;
-    authorInitials: string;
-}
-
-export interface Post {
-    id: string;
-    content: string;
-    hasImage: boolean;
-    createdAt: string;
-    authorName: string;
-    authorInitials: string;
-    likesCount: number;
-    commentsCount: number;
-    comments: Comment[]; // <--- IDINAGDAG ITO
-}
-
 export interface Friend {
     friendshipId: string;
     friendUserId: string;
@@ -38,5 +18,37 @@ export interface Friend {
     friendInitials: string;
     friendRole: string;
     isAccepted: boolean;
-    isRequester: boolean; // <--- ITO YUNG NAWAWALA
+    isRequester: boolean; 
 }
+
+// 🚨 FIX 1: Changed from 'enum' to 'type' to fix the Vite compilation error
+export type PostVisibility = 0 | 1 | 2;
+
+export interface CommentResponse {
+    id: string;
+    content: string;
+    createdAt: string;
+    authorName: string;
+    authorInitials: string;
+    authorProfilePicture?: string;
+    parentCommentId?: string;
+    replies?: CommentResponse[]; 
+}
+
+export interface PostResponse {
+    id: string;
+    content: string;
+    hasImage: boolean;
+    imageUrl?: string;
+    createdAt: string;
+    authorName: string;
+    authorInitials: string;
+    authorProfilePicture?: string;
+    likesCount: number;
+    commentsCount: number;
+    comments: CommentResponse[]; 
+}
+
+// 🚨 FIX 2: This safely maps the old names to the new names so Vite doesn't crash!
+export interface Post extends PostResponse {}
+export interface Comment extends CommentResponse {}

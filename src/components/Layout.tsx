@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Search, Bell, Home as HomeIcon, Users, LayoutGrid, UserPlus, Loader2, X, Edit, Camera, Trash2, Heart, MessageCircle, AlertCircle, LogOut, Clock, UserCheck } from 'lucide-react';
+import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'; // 🚨 FIX: Added Global SignalR
 import { Avatar, getAvatarColor } from './Shared';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../api/client';
-// 🚨 IBINALIK NATIN ANG CHATBOX PARA SA DESKTOP!
 import ChatBox from './ChatBox';
 
 const convertToBase64 = (file: File): Promise<string> => {
@@ -14,6 +14,12 @@ const convertToBase64 = (file: File): Promise<string> => {
         reader.onload = () => resolve(reader.result as string);
         reader.onerror = error => reject(error);
     });
+};
+
+const getFullImageUrl = (url?: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('http') || url.startsWith('data:')) return url;
+    return `https://localhost:7227${url}`;
 };
 
 const timeAgo = (dateString: string) => {
@@ -39,40 +45,38 @@ export default function Layout() {
     const pfpInputRef = useRef<HTMLInputElement>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
 
-    // ── REFS PARA SA AUTO-CLOSE LOGIC ──
     const notifRef = useRef<HTMLDivElement>(null);
     const messageMenuRef = useRef<HTMLDivElement>(null);
     const searchRef = useRef<HTMLDivElement>(null);
 
-    // ── GLOBAL DATA STATES ──
     const [allUsersList, setAllUsersList] = useState<any[]>([]);
     const [allPostsList, setAllPostsList] = useState<any[]>([]);
     const [myNetworkList, setMyNetworkList] = useState<any[]>([]);
 
     const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
     const [isSending, setIsSending] = useState<Record<string, boolean>>({});
-    const [stats, setStats] = useState({ followers: 0, following: 0, posts: 0 });
+    const [stats, setStats] = useState({ friends: 0, posts: 0 });
     const [myPosts, setMyPosts] = useState<any[]>([]);
 
     const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
     const [isSavingProfile, setIsSavingProfile] = useState(false);
     const [saveError, setSaveError] = useState('');
 
-    const [editProfileData, setEditProfileData] = useState({ username: '', role: '', initials: '', profilePicture: '', coverPhoto: '' });
+    const [editProfileData, setEditProfileData] = useState({ username: '', role: '', initials: '' });
+    
+    const [selectedPfpFile, setSelectedPfpFile] = useState<File | null>(null);
+    const [selectedCoverFile, setSelectedCoverFile] = useState<File | null>(null);
     const [profileImgPreview, setProfileImgPreview] = useState<string | null>(null);
     const [coverImgPreview, setCoverImgPreview] = useState<string | null>(null);
 
-    // ── MENUS AND NOTIFS STATES ──
     const [isNotifOpen, setIsNotifOpen] = useState(false);
     const [isMessageMenuOpen, setIsMessageMenuOpen] = useState(false);
 
-    // ── STATES PARA SA SEARCH ──
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [searchType, setSearchType] = useState<'people' | 'posts'>('people');
     const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
 
-    // ── MODAL TABS ──
     const [mobilePublicTab, setMobilePublicTab] = useState<'about' | 'timeline'>('about');
     const [mobilePrivateTab, setMobilePrivateTab] = useState<'edit' | 'timeline'>('edit');
 
@@ -81,8 +85,6 @@ export default function Layout() {
     const unreadCount = notifications.filter(n => !n.isRead).length;
 
     const [viewingUsername, setViewingUsername] = useState<string | null>(null);
-
-    // 🚨 IBINALIK ANG ACTIVE CHAT USER PARA SA DESKTOP POPUP 🚨
     const [activeChatUser, setActiveChatUser] = useState<{ id: string; name: string; initials: string; profilePicture?: string } | null>(null);
 
     const fetchNotificationsAndMessages = async () => {
@@ -98,6 +100,7 @@ export default function Layout() {
         }
     };
 
+    // Initial Fetch & Backup Polling
     useEffect(() => {
         if (user) {
             fetchNotificationsAndMessages();
@@ -105,6 +108,31 @@ export default function Layout() {
             return () => clearInterval(interval);
         }
     }, [user, activeChatUser]);
+
+    // 🚨 FIX: Global SignalR Listener for INSTANT Messenger-like badges
+    useEffect(() => {
+        const token = localStorage.getItem('weshare_token');
+        if (!user || !token) return;
+
+        const globalConnection = new HubConnectionBuilder()
+            .withUrl(`https://localhost:7227/chathub?access_token=${token}`)
+            .configureLogging(LogLevel.None)
+            .withAutomaticReconnect()
+            .build();
+
+        globalConnection.start().then(() => {
+            globalConnection.on("ReceiveMessage", (message) => {
+                // If we receive a message from someone else, and we aren't actively chatting with them right now, pop the badge!
+                if (message.senderId !== user.id && activeChatUser?.id !== message.senderId && location.pathname !== '/messages') {
+                    setUnreadMsgCount(prev => prev + 1);
+                }
+            });
+        }).catch(e => console.error("Global SignalR Connection failed", e));
+
+        return () => {
+            globalConnection.stop();
+        };
+    }, [user, activeChatUser, location.pathname]);
 
     useEffect(() => {
         setIsNotifOpen(false);
@@ -123,47 +151,71 @@ export default function Layout() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isNotifOpen, isMessageMenuOpen, isSearchOpen]);
 
-    const handleReadNotification = async (id: string, isRead: boolean) => {
-        if (isRead) return;
+    // 🚨 FIX: Smart Routing applied to both Desktop and Mobile Navs
+    const handleNotificationClick = async (notif: any) => {
+        if (!notif.isRead) {
+            try {
+                await apiFetch(`/Notifications/${notif.id}/read`, { method: 'PUT' });
+                setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n));
+            } catch (error) { console.error("Failed to mark as read", error); }
+        }
+
+        setIsNotifOpen(false); // Close dropdown
+
+        const content = notif.content.toLowerCase();
+        if (content.includes('post') || content.includes('comment') || content.includes('like')) {
+            navigate('/feed');
+        } else if (content.includes('friend') || content.includes('request') || content.includes('accept')) {
+            navigate('/network');
+        } else if (content.includes('message')) {
+            navigate('/messages');
+        }
+    };
+
+    const fetchDashboardData = async () => {
         try {
-            await apiFetch(`/Notifications/${id}/read`, { method: 'PUT' });
-            setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-        } catch (error) { console.error("Failed to mark as read", error); }
+            const [allUsers, myNetwork, allPosts] = await Promise.all([
+                apiFetch('/Users'),
+                apiFetch('/Friends/network'),
+                apiFetch(user ? '/Posts/friends-feed' : '/Posts')
+            ]);
+            setAllUsersList(allUsers);
+            setAllPostsList(allPosts);
+            setMyNetworkList(myNetwork);
+
+            const friendsCount = myNetwork.filter((f: any) => f.isAccepted).length;
+            const userPosts = allPosts.filter((p: any) => p.authorName === user?.username);
+            userPosts.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            
+            setMyPosts(userPosts);
+            setStats({ friends: friendsCount, posts: userPosts.length });
+
+            const networkIds = myNetwork.map((f: any) => f.friendUserId);
+            const validSuggestions = allUsers.filter((u: any) => u.id !== user?.id && !networkIds.includes(u.id));
+            setSuggestedUsers(validSuggestions.slice(0, 5));
+
+            if (user) {
+                setProfileImgPreview((user as any).profilePicture || null);
+                setCoverImgPreview((user as any).coverPhoto || null);
+            }
+        } catch (error) {
+            console.error("Failed to load dashboard data", error);
+        }
     };
 
     useEffect(() => {
-        const fetchDashboardData = async () => {
-            try {
-                const [allUsers, myNetwork, allPosts] = await Promise.all([
-                    apiFetch('/Users'),
-                    apiFetch('/Friends/network'),
-                    apiFetch('/Posts')
-                ]);
-                setAllUsersList(allUsers);
-                setAllPostsList(allPosts);
-                setMyNetworkList(myNetwork);
-
-                const followersCount = myNetwork.filter((f: any) => f.isAccepted && !f.isRequester).length;
-                const followingCount = myNetwork.filter((f: any) => f.isAccepted && f.isRequester).length;
-                const userPosts = allPosts.filter((p: any) => p.authorName === user?.username);
-                userPosts.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-                setMyPosts(userPosts);
-                setStats({ followers: followersCount, following: followingCount, posts: userPosts.length });
-
-                const networkIds = myNetwork.map((f: any) => f.friendUserId);
-                const validSuggestions = allUsers.filter((u: any) => u.id !== user?.id && !networkIds.includes(u.id));
-                setSuggestedUsers(validSuggestions.slice(0, 5));
-
-                if (user) {
-                    setProfileImgPreview((user as any).profilePicture || null);
-                    setCoverImgPreview((user as any).coverPhoto || null);
-                }
-            } catch (error) {
-                console.error("Failed to load dashboard data", error);
-            }
-        };
         if (user) fetchDashboardData();
     }, [user, location.pathname]);
+
+    const handleDeletePost = async (postId: string) => {
+        if (!window.confirm("Are you sure you want to delete this post?")) return;
+        try {
+            await apiFetch(`/Posts/${postId}`, { method: 'DELETE' });
+            setMyPosts(prev => prev.filter(p => p.id !== postId));
+            setAllPostsList(prev => prev.filter(p => p.id !== postId));
+            setStats(s => ({ ...s, posts: s.posts - 1 }));
+        } catch (error) { console.error("Failed to delete post", error); }
+    };
 
     const handleSendRequest = async (receiverId: string) => {
         try {
@@ -178,9 +230,10 @@ export default function Layout() {
     const openProfileModal = () => {
         setSaveError('');
         setEditProfileData({
-            username: user?.username || '', role: user?.role || '', initials: user?.initials || '',
-            profilePicture: (user as any)?.profilePicture || '', coverPhoto: (user as any)?.coverPhoto || ''
+            username: user?.username || '', role: user?.role || '', initials: user?.initials || ''
         });
+        setSelectedPfpFile(null);
+        setSelectedCoverFile(null);
         setMobilePrivateTab('edit');
         setIsProfileModalOpen(true);
     };
@@ -190,22 +243,40 @@ export default function Layout() {
         if (!user) return;
         try {
             setSaveError(''); setIsSavingProfile(true);
-            const payload = { username: editProfileData.username, role: editProfileData.role, initials: editProfileData.initials, profilePicture: profileImgPreview, coverPhoto: coverImgPreview };
-            await apiFetch(`/Users/${user.id}`, { method: 'PUT', body: JSON.stringify(payload) });
-            setUser(prev => prev ? { ...prev, ...payload } as any : null);
+            const formData = new FormData();
+            formData.append('username', editProfileData.username);
+            formData.append('role', editProfileData.role);
+            formData.append('initials', editProfileData.initials);
+            
+            if (selectedPfpFile) formData.append('profilePicture', selectedPfpFile);
+            if (selectedCoverFile) formData.append('coverPhoto', selectedCoverFile);
+
+            const updatedProfile = await apiFetch(`/Users/${user.id}`, { method: 'PUT', body: formData });
+            setUser(updatedProfile);
             setIsProfileModalOpen(false);
+            window.location.reload(); 
         } catch (error: any) { setSaveError(error.message || "Failed to save profile."); }
         finally { setIsSavingProfile(false); }
     };
 
-    const handlePfpChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handlePfpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (file) { const base64 = await convertToBase64(file); setProfileImgPreview(base64); }
+        if (file) {
+            setSelectedPfpFile(file);
+            const reader = new FileReader();
+            reader.onload = (e) => setProfileImgPreview(e.target?.result as string);
+            reader.readAsDataURL(file);
+        }
     };
 
-    const handleCoverChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleCoverChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (file) { const base64 = await convertToBase64(file); setCoverImgPreview(base64); }
+        if (file) {
+            setSelectedCoverFile(file);
+            const reader = new FileReader();
+            reader.onload = (e) => setCoverImgPreview(e.target?.result as string);
+            reader.readAsDataURL(file);
+        }
     };
 
     const publicUser = viewingUsername ? allUsersList.find(u => u.username === viewingUsername) : null;
@@ -226,7 +297,7 @@ export default function Layout() {
     const MobileAvatar = () => (
         <button onClick={openProfileModal} className="w-9 h-9 rounded-full overflow-hidden border-2 border-indigo-500/50 shrink-0">
             {(user as any)?.profilePicture
-                ? <img src={(user as any).profilePicture} className="w-full h-full object-cover" />
+                ? <img src={getFullImageUrl((user as any).profilePicture)} className="w-full h-full object-cover" />
                 : <div className="w-full h-full flex items-center justify-center text-xs font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{user?.initials || "??"}</div>
             }
         </button>
@@ -269,7 +340,7 @@ export default function Layout() {
                                         filteredSearchUsers.map(u => (
                                             <div key={u.id} onClick={() => { setViewingUsername(u.username); setIsSearchOpen(false); setSearchQuery(''); }} className="flex items-center gap-3 p-3 hover:bg-slate-800/50 rounded-xl cursor-pointer transition-colors group">
                                                 <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-700 shrink-0 group-hover:border-indigo-500 transition-colors">
-                                                    {u.profilePicture ? <img src={u.profilePicture} className="w-full h-full object-cover" /> : <Avatar initials={u.initials} size="md" colorClass={getAvatarColor(u.username)} />}
+                                                    {u.profilePicture ? <img src={getFullImageUrl(u.profilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={u.initials} size="md" colorClass={getAvatarColor(u.username)} />}
                                                 </div>
                                                 <div className="overflow-hidden">
                                                     <div className="text-sm font-bold text-white group-hover:text-indigo-400 truncate transition-colors">{u.username}</div>
@@ -284,7 +355,7 @@ export default function Layout() {
                                                 <div className="flex items-center justify-between">
                                                     <div className="flex items-center gap-2">
                                                         <div className="w-6 h-6 rounded-full overflow-hidden shrink-0">
-                                                            {p.authorProfilePicture ? <img src={p.authorProfilePicture} className="w-full h-full object-cover" /> : <Avatar initials={p.authorInitials} size="sm" colorClass={getAvatarColor(p.authorName)} />}
+                                                            {p.authorProfilePicture ? <img src={getFullImageUrl(p.authorProfilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={p.authorInitials} size="sm" colorClass={getAvatarColor(p.authorName)} />}
                                                         </div>
                                                         <span className="text-xs font-bold text-slate-300 group-hover:text-indigo-400 transition-colors">{p.authorName}</span>
                                                     </div>
@@ -326,7 +397,7 @@ export default function Layout() {
                                 <div className="max-h-80 overflow-y-auto custom-scrollbar px-2 space-y-1">
                                     {notifications.length === 0 ? (<div className="text-center text-slate-500 text-xs py-4">No notifications yet.</div>) : (
                                         notifications.map(notif => (
-                                            <div key={notif.id} onClick={() => handleReadNotification(notif.id, notif.isRead)} className={`p-3 rounded-xl flex gap-3 cursor-pointer transition-colors ${notif.isRead ? 'opacity-60 hover:bg-slate-800/30' : 'bg-indigo-500/5 hover:bg-indigo-500/10'}`}>
+                                            <div key={notif.id} onClick={() => handleNotificationClick(notif)} className={`p-3 rounded-xl flex gap-3 cursor-pointer transition-colors ${notif.isRead ? 'opacity-60 hover:bg-slate-800/30' : 'bg-indigo-500/5 hover:bg-indigo-500/10'}`}>
                                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${notif.isRead ? 'bg-slate-800 text-slate-400' : 'bg-indigo-500 text-white'}`}><Bell className="w-4 h-4" /></div>
                                                 <div className="flex-1"><p className={`text-xs ${notif.isRead ? 'text-slate-400' : 'text-slate-200 font-bold'}`}>{notif.content}</p><p className="text-[10px] text-indigo-400/70 uppercase tracking-widest mt-1">{timeAgo(notif.createdAt)}</p></div>
                                                 {!notif.isRead && <div className="w-2 h-2 rounded-full bg-rose-500 mt-2 shrink-0"></div>}
@@ -367,7 +438,7 @@ export default function Layout() {
                                     <div className="max-h-64 overflow-y-auto custom-scrollbar px-2 space-y-1">
                                         {notifications.length === 0 ? (<div className="text-center text-slate-500 text-xs py-4">No notifications yet.</div>) : (
                                             notifications.map(notif => (
-                                                <div key={notif.id} onClick={() => handleReadNotification(notif.id, notif.isRead)} className={`p-3 rounded-xl flex gap-3 cursor-pointer transition-colors ${notif.isRead ? 'opacity-60 hover:bg-slate-800/30' : 'bg-indigo-500/5 hover:bg-indigo-500/10'}`}>
+                                                <div key={notif.id} onClick={() => handleNotificationClick(notif)} className={`p-3 rounded-xl flex gap-3 cursor-pointer transition-colors ${notif.isRead ? 'opacity-60 hover:bg-slate-800/30' : 'bg-indigo-500/5 hover:bg-indigo-500/10'}`}>
                                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${notif.isRead ? 'bg-slate-800 text-slate-400' : 'bg-indigo-500 text-white'}`}><Bell className="w-4 h-4" /></div>
                                                     <div className="flex-1"><p className={`text-xs ${notif.isRead ? 'text-slate-400' : 'text-slate-200 font-bold'}`}>{notif.content}</p><p className="text-[10px] text-indigo-400/70 uppercase tracking-widest mt-1">{timeAgo(notif.createdAt)}</p></div>
                                                     {!notif.isRead && <div className="w-2 h-2 rounded-full bg-rose-500 mt-2 shrink-0"></div>}
@@ -382,21 +453,6 @@ export default function Layout() {
                             <LogOut className="w-[18px] h-[18px]" />
                         </button>
                     </div>
-                </div>
-                <div className="flex items-center border-t border-slate-800/60">
-                    <button onClick={() => navigate('/feed')} className={`flex-1 flex items-center justify-center py-2.5 relative transition-colors ${activeTab === '/feed' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
-                        <HomeIcon className="w-6 h-6" />{activeTab === '/feed' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-[3px] bg-indigo-500 rounded-t-full" />}
-                    </button>
-                    <button onClick={() => navigate('/network')} className={`flex-1 flex items-center justify-center py-2.5 relative transition-colors ${activeTab === '/network' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
-                        <Users className="w-6 h-6" />{activeTab === '/network' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-[3px] bg-indigo-500 rounded-t-full" />}
-                    </button>
-                    <button onClick={() => navigate('/messages')} className={`flex-1 flex items-center justify-center py-2.5 relative transition-colors ${activeTab === '/messages' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
-                        <div className="relative">
-                            <MessageCircle className="w-6 h-6" />
-                            {unreadMsgCount > 0 && <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-emerald-500 rounded-full text-[9px] font-black text-white flex items-center justify-center px-0.5">{unreadMsgCount}</span>}
-                        </div>
-                        {activeTab === '/messages' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-[3px] bg-indigo-500 rounded-t-full" />}
-                    </button>
                 </div>
             </nav>
 
@@ -427,7 +483,7 @@ export default function Layout() {
                                     {filteredSearchUsers.map(u => (
                                         <div key={u.id} onClick={() => { setViewingUsername(u.username); setIsMobileSearchOpen(false); setSearchQuery(''); }} className="flex items-center gap-3 p-3 hover:bg-slate-800/50 rounded-xl cursor-pointer transition-colors active:scale-[0.98]">
                                             <div className="w-12 h-12 rounded-full overflow-hidden border border-slate-700 shrink-0">
-                                                {u.profilePicture ? <img src={u.profilePicture} className="w-full h-full object-cover" /> : <Avatar initials={u.initials} size="md" colorClass={getAvatarColor(u.username)} />}
+                                                {u.profilePicture ? <img src={getFullImageUrl(u.profilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={u.initials} size="md" colorClass={getAvatarColor(u.username)} />}
                                             </div>
                                             <div className="flex-1 overflow-hidden">
                                                 <div className="text-sm font-bold text-white truncate">{u.username}</div>
@@ -446,7 +502,7 @@ export default function Layout() {
                                         <div key={p.id} onClick={() => { setViewingUsername(p.authorName); setIsMobileSearchOpen(false); setSearchQuery(''); }} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 cursor-pointer active:scale-[0.98] transition-all">
                                             <div className="flex items-center gap-2 mb-3">
                                                 <div className="w-8 h-8 rounded-full overflow-hidden">
-                                                    {p.authorProfilePicture ? <img src={p.authorProfilePicture} className="w-full h-full object-cover" /> : <Avatar initials={p.authorInitials} size="sm" colorClass={getAvatarColor(p.authorName)} />}
+                                                    {p.authorProfilePicture ? <img src={getFullImageUrl(p.authorProfilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={p.authorInitials} size="sm" colorClass={getAvatarColor(p.authorName)} />}
                                                 </div>
                                                 <div>
                                                     <div className="text-xs font-bold text-white">{p.authorName}</div>
@@ -464,25 +520,24 @@ export default function Layout() {
                 </div>
             )}
 
-            <div className="flex-1 w-full max-w-[1500px] mx-auto flex gap-4 md:gap-6 p-3 md:p-6 relative z-10 overflow-hidden">
+            {/* MAIN CONTENT AREA */}
+            <div className="flex-1 w-full max-w-[1500px] mx-auto flex gap-4 md:gap-6 p-3 md:p-6 relative z-10 overflow-hidden pb-[80px] md:pb-6">
                 <div className="hidden lg:flex flex-col gap-5 w-[280px] xl:w-[320px] shrink-0 h-full overflow-y-auto custom-scrollbar pb-10 pr-2">
                     <div onClick={openProfileModal} className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-[20px] p-5 text-center shadow-lg cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800/40 transition-all group shrink-0">
                         <div className="relative inline-block mx-auto mb-3 group-hover:scale-105 transition-transform">
                             <div className="w-16 h-16 rounded-full border-4 border-slate-900 shadow-xl shadow-indigo-500/20 overflow-hidden bg-slate-800 flex items-center justify-center">
-                                {(user as any)?.profilePicture ? <img src={(user as any).profilePicture} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xl font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{user?.initials || "??"}</div>}
+                                {(user as any)?.profilePicture ? <img src={getFullImageUrl((user as any).profilePicture)} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xl font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{user?.initials || "??"}</div>}
                             </div>
                             <div className="absolute bottom-1 right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-900"></div>
                         </div>
                         <h3 className="font-bold text-white text-base group-hover:text-indigo-400 transition-colors">{user?.username || "Loading..."}</h3>
                         <p className="text-xs text-slate-400 font-medium mb-4 truncate">{user?.email || ""}</p>
-                        <div className="grid grid-cols-3 gap-1 border-t border-slate-800 pt-4">
-                            <div><div className="font-bold text-white">{stats.followers}</div><div className="text-[10px] text-slate-500 font-medium uppercase mt-0.5">Followers</div></div>
-                            <div><div className="font-bold text-white">{stats.following}</div><div className="text-[10px] text-slate-500 font-medium uppercase mt-0.5">Following</div></div>
+                        <div className="grid grid-cols-2 gap-1 border-t border-slate-800 pt-4">
+                            <div><div className="font-bold text-white">{stats.friends}</div><div className="text-[10px] text-slate-500 font-medium uppercase mt-0.5">Friends</div></div>
                             <div><div className="font-bold text-white">{stats.posts}</div><div className="text-[10px] text-slate-500 font-medium uppercase mt-0.5">Posts</div></div>
                         </div>
                     </div>
 
-                    {/* ── NAIBALIK NA DESKTOP LEFT SIDEBAR ── */}
                     <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-[20px] p-3 shadow-lg shrink-0">
                         <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-3 mb-2 mt-1">Menu</div>
                         <div className="space-y-0.5">
@@ -503,8 +558,7 @@ export default function Layout() {
                     </div>
                 </div>
 
-                <div className="flex-1 w-full flex flex-col gap-4 md:gap-6 h-full overflow-y-auto custom-scrollbar pb-4 md:pb-20 px-0 md:px-2">
-                    {/* 🚨 IPINASA NATIN ANG setActiveChatUser DITO PARA SA DESKTOP POPUP */}
+                <div className="flex-1 w-full flex flex-col gap-4 md:gap-6 h-full overflow-y-auto custom-scrollbar px-0 md:px-2">
                     <Outlet context={{ setViewingUsername, setActiveChatUser }} />
                 </div>
 
@@ -516,7 +570,7 @@ export default function Layout() {
                                 suggestedUsers.map((p) => (
                                     <div key={p.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-800/50 transition-colors group">
                                         <div className="flex items-center gap-3 cursor-pointer" onClick={() => setViewingUsername(p.username)}>
-                                            {p.profilePicture ? <img src={p.profilePicture} className="w-8 h-8 rounded-lg object-cover" /> : <Avatar initials={p.initials} size="md" colorClass={getAvatarColor(p.username)} />}
+                                            {p.profilePicture ? <img src={getFullImageUrl(p.profilePicture)} className="w-8 h-8 rounded-lg object-cover" /> : <Avatar initials={p.initials} size="md" colorClass={getAvatarColor(p.username)} />}
                                             <div>
                                                 <div className="text-sm font-bold text-white group-hover:text-indigo-400 truncate max-w-[120px] transition-colors">{p.username}</div>
                                                 <div className="text-[11px] font-medium text-slate-500 truncate max-w-[120px]">{p.role}</div>
@@ -531,6 +585,26 @@ export default function Layout() {
                 </div>
             </div>
 
+            <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] pb-safe">
+                <div className="flex items-center justify-around h-[60px]">
+                    <button onClick={() => navigate('/feed')} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${activeTab === '/feed' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <HomeIcon className={`w-5 h-5 ${activeTab === '/feed' ? 'fill-indigo-400/20' : ''}`} />
+                        <span className="text-[9px] font-bold">Feed</span>
+                    </button>
+                    <button onClick={() => navigate('/network')} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${activeTab === '/network' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <Users className={`w-5 h-5 ${activeTab === '/network' ? 'fill-indigo-400/20' : ''}`} />
+                        <span className="text-[9px] font-bold">Network</span>
+                    </button>
+                    <button onClick={() => navigate('/messages')} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${activeTab === '/messages' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <div className="relative">
+                            <MessageCircle className={`w-5 h-5 ${activeTab === '/messages' ? 'fill-indigo-400/20' : ''}`} />
+                            {unreadMsgCount > 0 && <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-emerald-500 rounded-full text-[9px] font-black text-white flex items-center justify-center px-0.5">{unreadMsgCount}</span>}
+                        </div>
+                        <span className="text-[9px] font-bold">Messages</span>
+                    </button>
+                </div>
+            </div>
+
             {isProfileModalOpen && (
                 <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4 lg:p-10 transition-all" onClick={(e) => { if (e.target === e.currentTarget) setIsProfileModalOpen(false); }}>
                     <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl h-[85vh] md:h-[90vh] rounded-t-[1.5rem] md:rounded-[2rem] shadow-2xl flex flex-col relative animate-in slide-in-from-bottom md:zoom-in-95 duration-200 overflow-hidden">
@@ -538,16 +612,16 @@ export default function Layout() {
 
                         <div className="w-full h-full flex flex-col overflow-hidden">
                             <div className="w-full h-32 md:h-64 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative shrink-0 group">
-                                {coverImgPreview && <img src={coverImgPreview} className="w-full h-full object-cover" alt="Cover" />}
+                                {coverImgPreview && <img src={getFullImageUrl(coverImgPreview)} className="w-full h-full object-cover" alt="Cover" />}
                                 <label className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer z-10"><div className="bg-black/50 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-xl flex items-center gap-2 backdrop-blur-sm border border-white/20 font-bold text-xs md:text-sm shadow-xl"><Camera className="w-3.5 h-3.5 md:w-4 md:h-4" /> Update Cover</div><input type="file" ref={coverInputRef} onChange={handleCoverChange} accept="image/*" className="hidden" /></label>
-                                {coverImgPreview && (<button onClick={(e) => { e.preventDefault(); setCoverImgPreview(null); }} className="absolute top-3 left-3 md:top-6 md:left-6 z-20 bg-rose-500/90 hover:bg-rose-500 backdrop-blur-md p-1.5 md:p-2.5 rounded-full border border-rose-400/50 text-white transition-colors shadow-lg"><Trash2 className="w-3 h-3 md:w-4 md:h-4" /></button>)}
+                                {coverImgPreview && (<button onClick={(e) => { e.preventDefault(); setCoverImgPreview(null); setSelectedCoverFile(null); }} className="absolute top-3 left-3 md:top-6 md:left-6 z-20 bg-rose-500/90 hover:bg-rose-500 backdrop-blur-md p-1.5 md:p-2.5 rounded-full border border-rose-400/50 text-white transition-colors shadow-lg"><Trash2 className="w-3 h-3 md:w-4 md:h-4" /></button>)}
                                 <div className="absolute -bottom-10 md:-bottom-16 left-4 md:left-8 flex items-end gap-3 md:gap-6 z-20">
                                     <div className="relative group/pfp shrink-0">
                                         <div className="w-20 h-20 md:w-32 md:h-32 rounded-full border-[4px] md:border-[6px] border-slate-900 bg-slate-800 overflow-hidden flex items-center justify-center relative shadow-xl">
-                                            {profileImgPreview ? (<img src={profileImgPreview} className="w-full h-full object-cover" alt="Profile" />) : (<div className="w-full h-full flex items-center justify-center text-3xl md:text-4xl font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{editProfileData.initials || "??"}</div>)}
+                                            {profileImgPreview ? (<img src={getFullImageUrl(profileImgPreview)} className="w-full h-full object-cover" alt="Profile" />) : (<div className="w-full h-full flex items-center justify-center text-3xl md:text-4xl font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{editProfileData.initials || "??"}</div>)}
                                             <label className="absolute inset-0 bg-black/60 opacity-0 group-hover/pfp:opacity-100 flex flex-col items-center justify-center transition-opacity cursor-pointer"><Camera className="w-4 h-4 md:w-6 md:h-6 text-white mb-0.5" /><span className="text-[8px] md:text-[10px] text-white font-bold uppercase tracking-widest">Update</span><input type="file" ref={pfpInputRef} onChange={handlePfpChange} accept="image/*" className="hidden" /></label>
                                         </div>
-                                        {profileImgPreview && (<button onClick={(e) => { e.preventDefault(); setProfileImgPreview(null); }} className="absolute bottom-0 right-0 bg-rose-500 p-1 md:p-1.5 rounded-full border-2 md:border-4 border-slate-900 text-white hover:bg-rose-600 transition-colors shadow-lg z-30"><Trash2 className="w-2.5 h-2.5 md:w-3 md:h-3" /></button>)}
+                                        {profileImgPreview && (<button onClick={(e) => { e.preventDefault(); setProfileImgPreview(null); setSelectedPfpFile(null); }} className="absolute bottom-0 right-0 bg-rose-500 p-1 md:p-1.5 rounded-full border-2 md:border-4 border-slate-900 text-white hover:bg-rose-600 transition-colors shadow-lg z-30"><Trash2 className="w-2.5 h-2.5 md:w-3 md:h-3" /></button>)}
                                     </div>
                                     <div className="pb-1 md:pb-4 min-w-0">
                                         <h2 className="text-base md:text-3xl font-black text-white drop-shadow-md truncate">{editProfileData.username || "Loading..."}</h2>
@@ -569,7 +643,7 @@ export default function Layout() {
                             </div>
 
                             <div className="flex-1 overflow-hidden">
-                                <div className="md:hidden h-full overflow-y-auto custom-scrollbar">
+                                <div className="md:hidden h-full overflow-y-auto custom-scrollbar pb-10">
                                     {mobilePrivateTab === 'edit' ? (
                                         <div className="p-3 space-y-3">
                                             <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 shadow-inner">
@@ -586,23 +660,29 @@ export default function Layout() {
                                     ) : (
                                         <div className="p-3 space-y-3 pb-8">
                                             {myPosts.length === 0 ? (
-                                                <div className="bg-slate-950/50 border border-slate-800 border-dashed rounded-xl p-6 text-center text-slate-500 font-medium text-xs">You haven't posted anything yet.</div>
+                                                <div className="flex flex-col items-center justify-center py-16 bg-slate-950/50 border border-slate-800 border-dashed rounded-3xl text-slate-500">
+                                                    <LayoutGrid className="w-10 h-10 mb-3 opacity-30" />
+                                                    <span className="font-medium text-xs">No posts on this timeline yet.</span>
+                                                </div>
                                             ) : (
                                                 myPosts.map(post => (
                                                     <div key={post.id} className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 shadow-sm mb-3">
-                                                        <div className="flex items-center gap-2.5 mb-2">
-                                                            <div className="w-8 h-8 rounded-full border border-slate-800 overflow-hidden shrink-0">
-                                                                {(user as any)?.profilePicture ? <img src={(user as any).profilePicture} className="w-full h-full object-cover" /> : <Avatar initials={user?.initials || "??"} size="sm" colorClass={getAvatarColor(user?.username || '')} />}
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <div className="w-8 h-8 rounded-full border border-slate-800 overflow-hidden shrink-0">
+                                                                    {(user as any)?.profilePicture ? <img src={getFullImageUrl((user as any).profilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={user?.initials || "??"} size="sm" colorClass={getAvatarColor(user?.username || '')} />}
+                                                                </div>
+                                                                <div>
+                                                                    <div className="font-bold text-white text-xs">{user?.username}</div>
+                                                                    <div className="text-[9px] text-slate-500 uppercase tracking-wide">{new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                                                                </div>
                                                             </div>
-                                                            <div>
-                                                                <div className="font-bold text-white text-xs">{user?.username}</div>
-                                                                <div className="text-[9px] text-slate-500 uppercase tracking-wide">{new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                                                            </div>
+                                                            <button onClick={() => handleDeletePost(post.id)} className="p-1.5 text-slate-500 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                                                         </div>
                                                         <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{post.content}</p>
                                                         {post.hasImage && post.imageUrl && (
-                                                            <div className="mt-2 rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
-                                                                <img src={post.imageUrl} className="w-full h-auto max-h-[250px] object-cover" />
+                                                            <div className="mt-2 rounded-xl overflow-hidden border border-slate-800 bg-slate-950/80 backdrop-blur-md relative flex justify-center">
+                                                                <img src={getFullImageUrl(post.imageUrl)} className="w-full h-auto max-h-[250px] object-contain" />
                                                             </div>
                                                         )}
                                                         <div className="flex items-center gap-3 mt-2 pt-2 border-t border-slate-800/50 text-[10px] font-bold text-slate-500">
@@ -637,23 +717,29 @@ export default function Layout() {
                                         </div>
                                         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pb-10 pr-2">
                                             {myPosts.length === 0 ? (
-                                                <div className="bg-slate-950/50 border border-slate-800 border-dashed rounded-3xl p-10 text-center text-slate-500 font-medium">You haven't posted anything yet.</div>
+                                                <div className="flex flex-col items-center justify-center py-20 bg-slate-950/50 border border-slate-800 border-dashed rounded-3xl text-slate-500">
+                                                    <LayoutGrid className="w-12 h-12 mb-4 opacity-30" />
+                                                    <span className="font-medium text-sm">No posts on this timeline yet.</span>
+                                                </div>
                                             ) : (
                                                 myPosts.map(post => (
                                                     <div key={post.id} className="bg-slate-950/50 border border-slate-800 rounded-3xl p-5 shadow-sm">
-                                                        <div className="flex items-center gap-3 mb-3">
-                                                            <div className="w-9 h-9 rounded-full border-2 border-slate-800 overflow-hidden">
-                                                                {(user as any)?.profilePicture ? <img src={(user as any).profilePicture} className="w-full h-full object-cover" /> : <Avatar initials={user?.initials || "??"} size="md" colorClass={getAvatarColor(user?.username || '')} />}
+                                                        <div className="flex items-center justify-between mb-3">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-9 h-9 rounded-full border-2 border-slate-800 overflow-hidden">
+                                                                    {(user as any)?.profilePicture ? <img src={getFullImageUrl((user as any).profilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={user?.initials || "??"} size="md" colorClass={getAvatarColor(user?.username || '')} />}
+                                                                </div>
+                                                                <div>
+                                                                    <div className="font-bold text-white text-sm">{user?.username}</div>
+                                                                    <div className="text-[10px] text-slate-500 uppercase tracking-wide mt-0.5">{new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                                                                </div>
                                                             </div>
-                                                            <div>
-                                                                <div className="font-bold text-white text-sm">{user?.username}</div>
-                                                                <div className="text-[10px] text-slate-500 uppercase tracking-wide mt-0.5">{new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                                                            </div>
+                                                            <button onClick={() => handleDeletePost(post.id)} className="p-1.5 text-slate-500 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                                                         </div>
                                                         <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{post.content}</p>
                                                         {post.hasImage && post.imageUrl && (
-                                                            <div className="mt-4 rounded-2xl overflow-hidden border border-slate-800 bg-slate-950">
-                                                                <img src={post.imageUrl} className="w-full h-auto max-h-[400px] object-cover" />
+                                                            <div className="mt-4 rounded-2xl overflow-hidden border border-slate-800 bg-slate-950/80 backdrop-blur-md relative flex justify-center">
+                                                                <img src={getFullImageUrl(post.imageUrl)} className="w-full h-auto max-h-[400px] object-contain" />
                                                             </div>
                                                         )}
                                                         <div className="flex items-center gap-4 mt-4 pt-3 border-t border-slate-800/50 text-xs font-bold text-slate-500">
@@ -679,12 +765,12 @@ export default function Layout() {
 
                         <div className="w-full h-full flex flex-col overflow-hidden">
                             <div className="w-full h-32 md:h-64 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 relative shrink-0">
-                                {publicUser.coverPhoto && <img src={publicUser.coverPhoto} className="w-full h-full object-cover" alt="Cover" />}
+                                {publicUser.coverPhoto && <img src={getFullImageUrl(publicUser.coverPhoto)} className="w-full h-full object-cover" alt="Cover" />}
 
                                 <div className="absolute -bottom-10 md:-bottom-16 left-4 md:left-8 flex items-end gap-3 md:gap-6 z-20">
                                     <div className="relative shrink-0">
                                         <div className="w-20 h-20 md:w-32 md:h-32 rounded-full border-[4px] md:border-[6px] border-slate-900 bg-slate-800 overflow-hidden flex items-center justify-center shadow-xl">
-                                            {publicUser.profilePicture ? (<img src={publicUser.profilePicture} className="w-full h-full object-cover" alt="Profile" />) : (<div className="w-full h-full flex items-center justify-center text-3xl md:text-4xl font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{publicUser.initials || "??"}</div>)}
+                                            {publicUser.profilePicture ? (<img src={getFullImageUrl(publicUser.profilePicture)} className="w-full h-full object-cover" alt="Profile" />) : (<div className="w-full h-full flex items-center justify-center text-3xl md:text-4xl font-black text-white bg-gradient-to-br from-indigo-500 to-cyan-500">{publicUser.initials || "??"}</div>)}
                                         </div>
                                     </div>
                                     <div className="flex-1 min-w-0 pb-1 md:pb-4 flex flex-col md:flex-row md:items-end md:justify-between gap-1 md:gap-2">
@@ -726,7 +812,7 @@ export default function Layout() {
                             </div>
 
                             <div className="flex-1 overflow-hidden">
-                                <div className="md:hidden h-full overflow-y-auto custom-scrollbar">
+                                <div className="md:hidden h-full overflow-y-auto custom-scrollbar pb-10">
                                     {mobilePublicTab === 'about' ? (
                                         <div className="p-3 space-y-3">
                                             <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 shadow-inner">
@@ -741,13 +827,16 @@ export default function Layout() {
                                     ) : (
                                         <div className="p-3 space-y-3 pb-8">
                                             {publicUserPosts.length === 0 ? (
-                                                <div className="bg-slate-950/50 border border-slate-800 border-dashed rounded-xl p-6 text-center text-slate-500 font-medium text-xs">This user hasn't posted anything yet.</div>
+                                                <div className="flex flex-col items-center justify-center py-16 bg-slate-950/50 border border-slate-800 border-dashed rounded-3xl text-slate-500">
+                                                    <LayoutGrid className="w-10 h-10 mb-3 opacity-30" />
+                                                    <span className="font-medium text-xs">This user hasn't posted anything yet.</span>
+                                                </div>
                                             ) : (
                                                 publicUserPosts.map(post => (
                                                     <div key={post.id} className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 shadow-sm mb-3">
                                                         <div className="flex items-center gap-2.5 mb-2">
                                                             <div className="w-8 h-8 rounded-full border border-slate-800 overflow-hidden shrink-0">
-                                                                {publicUser.profilePicture ? <img src={publicUser.profilePicture} className="w-full h-full object-cover" /> : <Avatar initials={publicUser.initials} size="sm" colorClass={getAvatarColor(publicUser.username)} />}
+                                                                {publicUser.profilePicture ? <img src={getFullImageUrl(publicUser.profilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={publicUser.initials} size="sm" colorClass={getAvatarColor(publicUser.username)} />}
                                                             </div>
                                                             <div>
                                                                 <div className="font-bold text-white text-xs">{publicUser.username}</div>
@@ -756,8 +845,8 @@ export default function Layout() {
                                                         </div>
                                                         <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{post.content}</p>
                                                         {post.hasImage && post.imageUrl && (
-                                                            <div className="mt-2 rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
-                                                                <img src={post.imageUrl} className="w-full h-auto max-h-[250px] object-cover" />
+                                                            <div className="mt-2 rounded-xl overflow-hidden border border-slate-800 bg-slate-950/80 backdrop-blur-md relative flex justify-center">
+                                                                <img src={getFullImageUrl(post.imageUrl)} className="w-full h-auto max-h-[250px] object-contain" />
                                                             </div>
                                                         )}
                                                         <div className="flex items-center gap-3 mt-2 pt-2 border-t border-slate-800/50 text-[10px] font-bold text-slate-500">
@@ -774,7 +863,7 @@ export default function Layout() {
                                 <div className="hidden md:grid md:grid-cols-3 h-full overflow-hidden">
                                     <div className="col-span-1 border-r border-slate-800 p-8 overflow-y-auto custom-scrollbar">
                                         <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6 shadow-inner">
-                                            <h3 className="text-base font-bold text-white mb-4 border-b border-slate-800/50 pb-3">About</h3>
+                                            <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800/50 pb-3">About</h3>
                                             <div className="space-y-3">
                                                 <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Full Name</label><p className="text-white font-medium text-sm mt-0.5">{publicUser.username}</p></div>
                                                 <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Job Role</label><p className="text-white font-medium text-sm mt-0.5">{publicUser.role}</p></div>
@@ -788,8 +877,6 @@ export default function Layout() {
                                                         ) : relationshipStatus.isAccepted ? (
                                                             <>
                                                                 <div className="w-full py-2.5 rounded-xl text-sm font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 flex justify-center items-center gap-2 cursor-default"><UserCheck className="w-4 h-4" /> ✓ Friends</div>
-
-                                                                {/* 🚨 DESKTOP MESSAGE BUTTON LOGIC (Will Open Floating Chat Box on PC!) 🚨 */}
                                                                 <button onClick={() => { setViewingUsername(null); setActiveChatUser({ id: publicUser.id, name: publicUser.username, initials: publicUser.initials, profilePicture: publicUser.profilePicture }); }} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-slate-800 hover:bg-indigo-500 border border-slate-700 transition-all flex justify-center items-center gap-2"><MessageCircle className="w-4 h-4" /> Send Message</button>
                                                             </>
                                                         ) : relationshipStatus.isRequester ? (
@@ -810,13 +897,16 @@ export default function Layout() {
                                         </div>
                                         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pb-10 pr-2">
                                             {publicUserPosts.length === 0 ? (
-                                                <div className="bg-slate-950/50 border border-slate-800 border-dashed rounded-3xl p-10 text-center text-slate-500 font-medium">This user hasn't posted anything yet.</div>
+                                                <div className="flex flex-col items-center justify-center py-20 bg-slate-950/50 border border-slate-800 border-dashed rounded-3xl text-slate-500">
+                                                    <LayoutGrid className="w-12 h-12 mb-4 opacity-30" />
+                                                    <span className="font-medium text-sm">This user hasn't posted anything yet.</span>
+                                                </div>
                                             ) : (
                                                 publicUserPosts.map(post => (
                                                     <div key={post.id} className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6 shadow-sm">
                                                         <div className="flex items-center gap-3 mb-3">
                                                             <div className="w-10 h-10 rounded-full border-2 border-slate-800 overflow-hidden flex items-center justify-center">
-                                                                {publicUser.profilePicture ? <img src={publicUser.profilePicture} className="w-full h-full object-cover" /> : <Avatar initials={publicUser.initials} size="md" colorClass={getAvatarColor(publicUser.username)} />}
+                                                                {publicUser.profilePicture ? <img src={getFullImageUrl(publicUser.profilePicture)} className="w-full h-full object-cover" /> : <Avatar initials={publicUser.initials} size="md" colorClass={getAvatarColor(publicUser.username)} />}
                                                             </div>
                                                             <div>
                                                                 <div className="font-bold text-white text-sm">{publicUser.username}</div>
@@ -825,8 +915,8 @@ export default function Layout() {
                                                         </div>
                                                         <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{post.content}</p>
                                                         {post.hasImage && post.imageUrl && (
-                                                            <div className="mt-4 rounded-2xl overflow-hidden border border-slate-800 bg-slate-950">
-                                                                <img src={post.imageUrl} className="w-full h-auto max-h-[400px] object-cover" />
+                                                            <div className="mt-4 rounded-2xl overflow-hidden border border-slate-800 bg-slate-950/80 backdrop-blur-md relative flex justify-center">
+                                                                <img src={getFullImageUrl(post.imageUrl)} className="w-full h-auto max-h-[400px] object-contain" />
                                                             </div>
                                                         )}
                                                         <div className="flex items-center gap-4 mt-5 pt-4 border-t border-slate-800/50 text-xs font-bold text-slate-500">
@@ -845,7 +935,6 @@ export default function Layout() {
                 </div>
             )}
 
-            {/* ── DESKTOP FLOATING CHAT BOX ── */}
             {activeChatUser && (
                 <div className="hidden md:block z-[200]">
                     <ChatBox

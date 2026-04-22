@@ -8,12 +8,15 @@ export interface UserProfile {
     username: string;
     role: string;
     initials: string;
+    // 🚨 FIX: Added these so TypeScript knows they exist! 
+    profilePicture?: string; 
+    coverPhoto?: string;
 }
 
 interface AuthContextType {
     user: UserProfile | null;
     logout: () => void;
-    setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>; // <--- IDINAGDAG ITO
+    setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

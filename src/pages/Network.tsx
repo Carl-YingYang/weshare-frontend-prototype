@@ -6,6 +6,13 @@ import type { Friend } from '../types/index';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
+// 🚨 HELPER: Ensures relative URLs from the database get the correct backend prefix
+const getFullImageUrl = (url?: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('http') || url.startsWith('data:')) return url;
+    return `https://localhost:7227${url}`;
+};
+
 export default function Network() {
     const { user } = useAuth();
     const navigate = useNavigate();
@@ -123,27 +130,17 @@ export default function Network() {
                                     {isInteracting[conn.friendshipId] ? <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin" /> : <X className="w-3 h-3 md:w-4 md:h-4" />}
                                 </button>
 
-                                <div
-                                    className="cursor-pointer relative group-hover:scale-105 transition-transform"
-                                    onClick={() => setViewingUsername(conn.friendName)}
-                                >
-                                    {/* Responsive Avatar Size for Grid */}
+                                <div className="cursor-pointer relative group-hover:scale-105 transition-transform" onClick={() => setViewingUsername(conn.friendName)}>
                                     <div className="w-14 h-14 md:w-20 md:h-20 rounded-full border-2 border-slate-800 overflow-hidden flex items-center justify-center">
                                         <Avatar initials={conn.friendInitials} size="lg" colorClass={getAvatarColor(conn.friendName)} />
                                     </div>
                                 </div>
-                                <h3
-                                    className="font-bold text-white text-xs md:text-base mt-2 md:mt-4 hover:text-indigo-400 transition-colors cursor-pointer line-clamp-1 w-full px-1"
-                                    onClick={() => setViewingUsername(conn.friendName)}
-                                >
+                                <h3 className="font-bold text-white text-xs md:text-base mt-2 md:mt-4 hover:text-indigo-400 transition-colors cursor-pointer line-clamp-1 w-full px-1" onClick={() => setViewingUsername(conn.friendName)}>
                                     {conn.friendName}
                                 </h3>
                                 <p className="text-[9px] md:text-xs font-medium text-slate-400 mt-0.5 md:mt-1 mb-3 md:mb-6 truncate w-full px-2">{conn.friendRole}</p>
 
-                                <button
-                                    onClick={() => navigate('/messages')}
-                                    className="w-full flex items-center justify-center gap-1.5 md:gap-2 bg-slate-800/50 text-slate-300 font-bold py-2 md:py-2.5 rounded-lg md:rounded-xl text-[10px] md:text-sm border border-slate-700 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-all shadow-sm"
-                                >
+                                <button onClick={() => navigate('/messages')} className="w-full flex items-center justify-center gap-1.5 md:gap-2 bg-slate-800/50 text-slate-300 font-bold py-2 md:py-2.5 rounded-lg md:rounded-xl text-[10px] md:text-sm border border-slate-700 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-all shadow-sm">
                                     <MessageCircle className="w-3 h-3 md:w-4 md:h-4" /> <span className="hidden sm:inline">Message</span>
                                 </button>
                             </div>
@@ -161,11 +158,8 @@ export default function Network() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                         {receivedRequests.map((req) => (
                             <div key={req.friendshipId} className="bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-xl md:rounded-2xl p-3 md:p-4 flex items-center justify-between shadow-md hover:border-slate-700 transition-colors">
-                                <div
-                                    className="flex items-center gap-2.5 md:gap-3 overflow-hidden cursor-pointer group flex-1"
-                                    onClick={() => setViewingUsername(req.friendName)}
-                                >
-                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border border-slate-700 shrink-0">
+                                <div className="flex items-center gap-2.5 md:gap-3 overflow-hidden cursor-pointer group flex-1" onClick={() => setViewingUsername(req.friendName)}>
+                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border border-slate-700 shrink-0 flex items-center justify-center">
                                         <Avatar initials={req.friendInitials} size="md" colorClass={getAvatarColor(req.friendName)} />
                                     </div>
                                     <div className="overflow-hidden">
@@ -174,18 +168,10 @@ export default function Network() {
                                     </div>
                                 </div>
                                 <div className="flex gap-1.5 md:gap-2 shrink-0 ml-2">
-                                    <button
-                                        onClick={() => handleAcceptRequest(req.friendshipId)}
-                                        disabled={isInteracting[req.friendshipId]}
-                                        className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500 hover:text-white flex items-center justify-center transition-all disabled:opacity-50"
-                                    >
+                                    <button onClick={() => handleAcceptRequest(req.friendshipId)} disabled={isInteracting[req.friendshipId]} className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500 hover:text-white flex items-center justify-center transition-all disabled:opacity-50">
                                         {isInteracting[req.friendshipId] ? <Loader2 className="w-3.5 h-3.5 md:w-4 md:h-4 animate-spin" /> : <UserCheck className="w-4 h-4 md:w-5 md:h-5" />}
                                     </button>
-                                    <button
-                                        onClick={() => handleRejectRequest(req.friendshipId)}
-                                        disabled={isInteracting[req.friendshipId]}
-                                        className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-rose-500 hover:text-white hover:border-rose-500 flex items-center justify-center transition-all disabled:opacity-50"
-                                    >
+                                    <button onClick={() => handleRejectRequest(req.friendshipId)} disabled={isInteracting[req.friendshipId]} className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-rose-500 hover:text-white hover:border-rose-500 flex items-center justify-center transition-all disabled:opacity-50">
                                         {isInteracting[req.friendshipId] ? <Loader2 className="w-3.5 h-3.5 md:w-4 md:h-4 animate-spin" /> : <X className="w-4 h-4 md:w-5 md:h-5" />}
                                     </button>
                                 </div>
@@ -202,11 +188,8 @@ export default function Network() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
                         {sentRequests.map((req) => (
                             <div key={req.friendshipId} className="bg-slate-900/30 border border-slate-800/50 rounded-xl md:rounded-2xl p-2.5 md:p-3 flex items-center justify-between opacity-80 hover:opacity-100 transition-opacity">
-                                <div
-                                    className="flex items-center gap-2.5 md:gap-3 overflow-hidden cursor-pointer group flex-1"
-                                    onClick={() => setViewingUsername(req.friendName)}
-                                >
-                                    <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-700 shrink-0">
+                                <div className="flex items-center gap-2.5 md:gap-3 overflow-hidden cursor-pointer group flex-1" onClick={() => setViewingUsername(req.friendName)}>
+                                    <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-700 shrink-0 flex items-center justify-center">
                                         <Avatar initials={req.friendInitials} size="sm" colorClass={getAvatarColor(req.friendName)} />
                                     </div>
                                     <h3 className="font-bold text-white text-[11px] md:text-sm truncate group-hover:text-indigo-400 transition-colors">{req.friendName}</h3>
@@ -215,12 +198,7 @@ export default function Network() {
                                     <div className="flex items-center gap-1 text-[8px] md:text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-800 px-2 py-1 rounded-md md:rounded-lg">
                                         <Clock className="w-2.5 h-2.5 md:w-3 md:h-3" /> Pending
                                     </div>
-                                    <button
-                                        onClick={() => handleRejectRequest(req.friendshipId)}
-                                        disabled={isInteracting[req.friendshipId]}
-                                        className="p-1 md:p-1.5 rounded-md md:rounded-lg text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
-                                        title="Cancel Request"
-                                    >
+                                    <button onClick={() => handleRejectRequest(req.friendshipId)} disabled={isInteracting[req.friendshipId]} className="p-1 md:p-1.5 rounded-md md:rounded-lg text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 transition-colors disabled:opacity-50" title="Cancel Request">
                                         {isInteracting[req.friendshipId] ? <Loader2 className="w-2.5 h-2.5 md:w-3 md:h-3 animate-spin" /> : <X className="w-2.5 h-2.5 md:w-3 md:h-3" />}
                                     </button>
                                 </div>
@@ -239,13 +217,10 @@ export default function Network() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
                         {suggestedUsers.map((userSuggest) => (
                             <div key={userSuggest.id} className="bg-slate-900/40 border border-slate-800 rounded-xl md:rounded-2xl p-3 md:p-4 flex items-center justify-between hover:bg-slate-800/40 transition-colors">
-                                <div
-                                    className="flex items-center gap-2.5 md:gap-3 overflow-hidden cursor-pointer group flex-1"
-                                    onClick={() => setViewingUsername(userSuggest.username)}
-                                >
+                                <div className="flex items-center gap-2.5 md:gap-3 overflow-hidden cursor-pointer group flex-1" onClick={() => setViewingUsername(userSuggest.username)}>
                                     <div className="w-10 h-10 rounded-full border border-slate-700 overflow-hidden shrink-0 flex items-center justify-center group-hover:border-indigo-500 transition-colors">
                                         {userSuggest.profilePicture ? (
-                                            <img src={userSuggest.profilePicture} className="w-full h-full object-cover" />
+                                            <img src={getFullImageUrl(userSuggest.profilePicture)} className="w-full h-full object-cover" />
                                         ) : (
                                             <Avatar initials={userSuggest.initials} size="md" colorClass={getAvatarColor(userSuggest.username)} />
                                         )}
@@ -255,11 +230,7 @@ export default function Network() {
                                         <div className="text-[10px] md:text-[11px] text-slate-500 truncate">{userSuggest.role}</div>
                                     </div>
                                 </div>
-                                <button
-                                    onClick={() => handleSendRequest(userSuggest.id)}
-                                    disabled={isInteracting[userSuggest.id]}
-                                    className="w-8 h-8 md:w-9 md:h-9 ml-2 rounded-lg md:rounded-xl bg-slate-800 border border-slate-700 flex shrink-0 items-center justify-center text-slate-300 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-all disabled:opacity-50 shadow-sm"
-                                >
+                                <button onClick={() => handleSendRequest(userSuggest.id)} disabled={isInteracting[userSuggest.id]} className="w-8 h-8 md:w-9 md:h-9 ml-2 rounded-lg md:rounded-xl bg-slate-800 border border-slate-700 flex shrink-0 items-center justify-center text-slate-300 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 transition-all disabled:opacity-50 shadow-sm">
                                     {isInteracting[userSuggest.id] ? <Loader2 className="w-3.5 h-3.5 md:w-4 md:h-4 animate-spin" /> : <UserPlus className="w-3.5 h-3.5 md:w-4 md:h-4" />}
                                 </button>
                             </div>
@@ -267,7 +238,6 @@ export default function Network() {
                     </div>
                 </div>
             )}
-
         </div>
     );
 }

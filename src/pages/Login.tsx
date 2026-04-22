@@ -1,20 +1,16 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { LayoutGrid, AlertCircle, Loader2 } from 'lucide-react';
-import { apiFetch } from '../api/client'; // Import natin yung ginawa mong API Client!
+import { apiFetch } from '../api/client'; 
 
 export default function Login() {
-    const navigate = useNavigate();
-
     const [isRegistering, setIsRegistering] = useState(false);
-    const [isLoading, setIsLoading] = useState(false); // Para sa loading spinner
+    const [isLoading, setIsLoading] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
     const [role, setRole] = useState('');
     const [error, setError] = useState('');
 
-    // Auto-generate initials galing sa Username (e.g., "Carl Nieva" -> "CN")
     const getInitials = (name: string) => {
         return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
     };
@@ -26,30 +22,24 @@ export default function Login() {
 
         try {
             if (!isRegistering) {
-                // 🟢 TOTOONG LOGIN API CALL
                 const response = await apiFetch('/Auth/login', {
                     method: 'POST',
                     body: JSON.stringify({ email, password }),
                 });
-
-                // I-save ang totoong JWT token!
                 localStorage.setItem('weshare_token', response.token);
-                navigate('/feed');
-
+                // 🚨 FIX: Force a hard reload to ensure AuthContext fetches the user data
+                window.location.href = '/feed';
             } else {
-                // 🔵 TOTOONG REGISTER API CALL
                 const initials = getInitials(username);
                 const response = await apiFetch('/Auth/register', {
                     method: 'POST',
                     body: JSON.stringify({ email, username, password, role, initials }),
                 });
-
-                // I-save ang totoong JWT token!
                 localStorage.setItem('weshare_token', response.token);
-                navigate('/feed');
+                // 🚨 FIX: Force a hard reload to ensure AuthContext fetches the user data
+                window.location.href = '/feed';
             }
         } catch (err: any) {
-            // Kapag nag-throw ng error ang backend (e.g., "Email already in use")
             setError(err.message || 'Something went wrong. Please try again.');
         } finally {
             setIsLoading(false);

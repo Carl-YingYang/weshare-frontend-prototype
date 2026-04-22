@@ -4,8 +4,14 @@ import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signal
 import { apiFetch } from '../api/client';
 import { Avatar, getAvatarColor } from './Shared';
 
-// 🚨 SIGURADUHIN NA TAMA ANG BACKEND URL MO DITO
 const BACKEND_URL = 'https://localhost:7227';
+
+// 🚨 HELPER: Ensures relative URLs get the correct backend prefix
+const getFullImageUrl = (url?: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('http') || url.startsWith('data:')) return url;
+    return `https://localhost:7227${url}`;
+};
 
 interface ChatBoxProps {
     currentUser: any;
@@ -94,9 +100,9 @@ export default function ChatBox({ currentUser, chatUser, onClose }: ChatBoxProps
             {/* HEADER */}
             <div className="bg-slate-800 px-4 py-3 flex justify-between items-center border-b border-slate-700 shadow-sm cursor-pointer">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-600 shrink-0">
+                    <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-600 shrink-0 flex items-center justify-center">
                         {chatUser.profilePicture ? (
-                            <img src={chatUser.profilePicture} className="w-full h-full object-cover" />
+                            <img src={getFullImageUrl(chatUser.profilePicture)} className="w-full h-full object-cover" />
                         ) : (
                             <Avatar initials={chatUser.initials} size="sm" colorClass={getAvatarColor(chatUser.name)} />
                         )}
@@ -131,10 +137,32 @@ export default function ChatBox({ currentUser, chatUser, onClose }: ChatBoxProps
                     messages.map((msg, index) => {
                         const isMe = msg.senderId === currentUser.id;
                         return (
-                            <div key={index} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed shadow-sm ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/50'}`}>
+                            <div key={index} className={`flex gap-2 w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                {/* Friend's Avatar (Left) */}
+                                {!isMe && (
+                                    <div className="w-6 h-6 rounded-full overflow-hidden shrink-0 mt-auto border border-slate-700 flex items-center justify-center">
+                                        {chatUser.profilePicture ? (
+                                            <img src={getFullImageUrl(chatUser.profilePicture)} className="w-full h-full object-cover" />
+                                        ) : (
+                                            <Avatar initials={chatUser.initials} size="sm" colorClass={getAvatarColor(chatUser.name)} />
+                                        )}
+                                    </div>
+                                )}
+                                
+                                <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/50'}`}>
                                     {msg.content}
                                 </div>
+
+                                {/* My Avatar (Right) */}
+                                {isMe && (
+                                    <div className="w-6 h-6 rounded-full overflow-hidden shrink-0 mt-auto border border-slate-700 flex items-center justify-center">
+                                        {currentUser?.profilePicture ? (
+                                            <img src={getFullImageUrl(currentUser.profilePicture)} className="w-full h-full object-cover" />
+                                        ) : (
+                                            <Avatar initials={currentUser?.initials || "??"} size="sm" colorClass="bg-indigo-500" />
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         );
                     })
